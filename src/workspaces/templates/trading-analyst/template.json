@@ -1,0 +1,6 @@
+{
+  "displayName": "Trading Analyst",
+  "groupOrder": 30,
+  "description": "AI trading analyst workspace — reads portfolio and market data from Trade Republic, produces buy/sell recommendations for manual approval. Requires TR_PHONE and TR_PIN env vars.",
+  "defaultAgents": ["claude"]
+}
