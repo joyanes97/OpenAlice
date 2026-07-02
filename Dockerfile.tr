@@ -1,0 +1,84 @@
+# Dockerfile.tr — OpenAlice + Trade Republic integration
+#
+# Extends the standard OpenAlice build with:
+#   - Python 3 + pytr (Trade Republic unofficial WebSocket API)
+#   - Playwright/Chromium + system libs (pytr uses headless Chrome for auth)
+#
+# Build from the jose_aibroker repo:
+#   docker compose up -d --build
+
+# ─── build stage (same as base Dockerfile) ────────────────────────────────
+FROM node:22-trixie AS build
+WORKDIR /src
+RUN corepack enable && corepack prepare pnpm@10.29.2 --activate
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY scripts ./scripts
+COPY packages/ibkr/package.json packages/ibkr/
+COPY packages/opentypebb/package.json packages/opentypebb/
+COPY packages/uta-protocol/package.json packages/uta-protocol/
+COPY services/uta/package.json services/uta/
+COPY ui/package.json ui/
+
+RUN pnpm install --frozen-lockfile
+
+COPY . .
+RUN pnpm exec turbo run build --filter='!@traderalice/desktop' \
+    && pnpm exec tsup src/main.ts --format esm --dts
+RUN CI=true pnpm prune --prod --config.ignore-scripts=true
+
+# ─── runtime stage (OpenAlice slim + pytr additions) ─────────────────────
+FROM node:22-trixie-slim AS runtime
+WORKDIR /app
+
+# Base deps (same as Dockerfile) + Python 3 + Playwright/Chromium system libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git tini \
+        python3 python3-pip \
+        libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+        libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+        libxfixes3 libxrandr2 libgbm1 libasound2 libx11-6 libxcb1 \
+        libxext6 libxi6 libxrender1 libxtst6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# pytr + Playwright (installs bundled Chromium to /root/.cache/ms-playwright)
+RUN pip3 install --no-cache-dir --break-system-packages pytr playwright \
+    && playwright install chromium
+
+# Agent CLIs
+RUN npm install -g \
+        @anthropic-ai/claude-code \
+        @openai/codex \
+    && claude --version \
+    && codex --version \
+    && npm cache clean --force
+
+# Production artifacts
+COPY --from=build /src/dist                       ./dist
+COPY --from=build /src/services/uta/dist          ./services/uta/dist
+COPY --from=build /src/ui/dist                    ./ui/dist
+COPY --from=build /src/default                    ./default
+COPY --from=build /src/src/workspaces/templates   ./src/workspaces/templates
+COPY --from=build /src/scripts                    ./scripts
+COPY --from=build /src/node_modules               ./node_modules
+COPY --from=build /src/package.json               ./package.json
+COPY --from=build /src/packages                   ./packages
+COPY --from=build /src/services/uta/package.json  ./services/uta/package.json
+COPY --from=build /src/services/uta/node_modules  ./services/uta/node_modules
+
+ENV OPENALICE_APP_HOME=/app \
+    OPENALICE_HOME=/data \
+    AQ_LAUNCHER_ROOT=/data/workspaces \
+    HOME=/data/home \
+    NODE_ENV=production \
+    OPENALICE_WEB_PORT=47331 \
+    OPENALICE_MCP_PORT=47332 \
+    OPENALICE_UTA_PORT=47333 \
+    OPENALICE_BIND_HOST=0.0.0.0 \
+    TR_PROBE_SCRIPT=/app/scripts/trade-republic/pytr_readonly_probe.py
+
+VOLUME ["/data"]
+EXPOSE 47331
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "scripts/guardian/prod.mjs"]
