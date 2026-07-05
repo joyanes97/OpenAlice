@@ -55,6 +55,7 @@ import { createMetricsListener } from './task/metrics/index.js'
 import { NewsCollectorStore, NewsCollector } from './domain/news/index.js'
 import { createNewsArchiveTools } from './tool/news.js'
 import { createTradeRepublicTools } from './tool/trade-republic.js'
+import { createAnalysisTools } from './tool/analysis.js'
 
 // ==================== Persistence paths ====================
 
@@ -254,6 +255,8 @@ async function main() {
     toolCenter.register(createTradeRepublicTools(), 'trade-republic')
     console.log('trade-republic: tools registered (9 tools, read-only)')
   }
+  toolCenter.register(createAnalysisTools(), 'analysis')
+  console.log('analysis: tools registered (trBacktest)')
 
   console.log(`tool-center: ${toolCenter.list().length} tools registered`)
 
