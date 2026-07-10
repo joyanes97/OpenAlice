@@ -251,7 +251,7 @@ async function main() {
     toolCenter.register(createIndexTools(indexClient), 'indices')
   }
   toolCenter.register(createEconomyTools(economyClient, commodityClient), 'economy')
-  if (process.env['TR_PHONE'] && process.env['TR_PIN']) {
+  if ((process.env['TR_PHONE'] || process.env['TR_PHONE_FILE']) && (process.env['TR_PIN'] || process.env['TR_PIN_FILE'])) {
     toolCenter.register(createTradeRepublicTools(), 'trade-republic')
     console.log('trade-republic: tools registered (9 tools, read-only)')
   }

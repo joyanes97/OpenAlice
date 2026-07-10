@@ -55,6 +55,20 @@ def env_or_die(name: str) -> str:
     return value
 
 
+def secret_or_die(name: str) -> str:
+    """Read a Docker-style ``NAME_FILE`` secret, falling back to ``NAME``."""
+    file_path = os.getenv(f"{name}_FILE")
+    if file_path:
+        try:
+            value = Path(file_path).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            die(f"failed to read {name}_FILE: {exc}")
+        if value:
+            return value
+        die(f"{name}_FILE is empty")
+    return env_or_die(name)
+
+
 def ensure_local_playwright_on_path() -> None:
     """Make pytr's subprocess.run(['playwright', ...]) work with --target installs."""
     paths = []
@@ -82,8 +96,8 @@ def main() -> None:
     if command not in READ_ONLY_COMMANDS | AUTH_COMMANDS | LOCAL_COMMANDS:
         die(f"unsupported command: {command}")
 
-    phone = os.getenv("TR_PHONE")
-    pin = os.getenv("TR_PIN")
+    phone = secret_or_die("TR_PHONE") if command not in LOCAL_COMMANDS else None
+    pin = secret_or_die("TR_PIN") if command not in LOCAL_COMMANDS else None
     credentials_file = os.getenv("TR_CREDENTIALS_FILE", str(Path.home() / ".pytr" / "credentials"))
     cookies_file = os.getenv("TR_COOKIES_FILE", str(Path.home() / ".pytr" / "cookies"))
     try:
@@ -102,9 +116,6 @@ def main() -> None:
         return
 
     ensure_local_playwright_on_path()
-
-    if not phone or not pin:
-        die("TR_PHONE and TR_PIN are required")
 
     Path(credentials_file).parent.mkdir(parents=True, exist_ok=True)
     Path(cookies_file).parent.mkdir(parents=True, exist_ok=True)
