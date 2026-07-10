@@ -88,7 +88,7 @@ Suggested max size: 10% of portfolio for HIGH confidence, 5% for MEDIUM, 0% for 
 
 ## Step 4 — Backtest validation (when signal is BUY or SELL)
 
-Run \`trBacktest(ticker, strategy, 12)\` where:
+Run \`trBacktest\` with \`{ ticker, strategy, months: 12, commissionBps, slippageBps }\` where:
 - strategy = 'sma' for trend-following instruments (ETFs, growth stocks)
 - strategy = 'rsi' for mean-reverting instruments (dividend stocks, value plays)
 - strategy = 'momentum' for high-momentum names
@@ -96,6 +96,8 @@ Run \`trBacktest(ticker, strategy, 12)\` where:
 Note: ticker must be Yahoo Finance format (e.g. "ASML.AS" not ISIN). Get it from trGetInstrument shortName or trGetTicker.
 
 If alpha_pct < 0: add a risk note that the strategy has not historically outperformed buy-and-hold on this name.
+Treat every backtest as falsification evidence, not confirmation. State its cost assumptions and limitations.
+Use the defaults (10 commission bps + 5 slippage bps per side) only when no broker-specific estimate is available.
 
 ## Step 5 — Output
 
@@ -127,6 +129,7 @@ Save to \`recommendations/<TICKER>_<DATE>.md\`:
 
 ## Backtest (12m, <strategy>)
 total return: X% | B&H: X% | alpha: X% | max drawdown: X% | Sharpe: X.X
+assumptions: commission X bps/side | slippage X bps/side | fixed fees/taxes excluded
 
 ## Action required
 What to do in Trade Republic app (manual). Always tell the user the exact ISIN.
