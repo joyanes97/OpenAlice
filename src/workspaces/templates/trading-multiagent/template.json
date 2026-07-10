@@ -2,5 +2,6 @@
   "displayName": "Trading Multiagent",
   "groupOrder": 32,
   "description": "5-angle AI analysis: fundamentals + technical + sentiment + macro + risk. Produces scored buy/sell/hold recommendations with backtest validation.",
-  "defaultAgents": ["claude"]
+  "defaultAgents": ["claude"],
+  "bundledSkills": ["alice", "alice-analysis", "traderhub", "alice-workspace"]
 }

@@ -15,6 +15,7 @@ import { createEconomyTools } from '../tool/economy.js'
 import { createQuantTools } from '../tool/quant.js'
 import { createSnapshotTools } from '../tool/snapshot.js'
 import { createSimulateTools } from '../tool/simulate.js'
+import { createAnalysisTools } from '../tool/analysis.js'
 import { createThinkingTools } from '../tool/thinking.js'
 import { inboxPushFactory } from '../tool/inbox-push.js'
 import { inboxReadFactory } from '../tool/inbox-read.js'
@@ -42,6 +43,7 @@ describe('CLI_EXPORTS — data export (global tools)', () => {
   tc.register(createQuantTools(any), 'quant')
   tc.register(createSnapshotTools(any), 'snapshot')
   tc.register(createSimulateTools(any), 'simulate')
+  tc.register(createAnalysisTools(), 'analysis')
   tc.register(createEconomyTools(any, any), 'economy')
 
   it('every mapped verb resolves to a registered global tool', () => {
@@ -52,6 +54,10 @@ describe('CLI_EXPORTS — data export (global tools)', () => {
 
   it('is scope: global', () => {
     expect(getExport('data')?.scope).toBe('global')
+  })
+
+  it('exports backtest through the read-only analysis surface', () => {
+    expect(CLI_EXPORTS['data'].commands['analysis']?.['backtest']).toBe('trBacktest')
   })
 })
 

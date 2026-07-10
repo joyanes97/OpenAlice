@@ -99,8 +99,13 @@ the full workflow):
   **freshness contract** (`isLatestActual` / `staleTradingDays`). Use this for
   "what does/did X look like", not a hand-rolled quant dump.
 - **`alice analysis simulate --query XLE --entryDate … --exitRule …`** —
-  backtest one entry + one exit (`trailing_stop`/`ma_break`/`stop`/`target`/
-  `hold`); returns entry/exit, returnPct, MFE/MAE.
+   backtest one entry + one exit (`trailing_stop`/`ma_break`/`stop`/`target`/
+   `hold`); returns entry/exit, returnPct, MFE/MAE.
+- **`alice analysis backtest --ticker AAPL --strategy sma --months 12`** —
+  long-only strategy check using Yahoo historical data. Set
+  `--commission-bps` and `--slippage-bps` to conservative per-side estimates.
+  Output excludes fixed broker fees and taxes; use it to reject weak ideas, never
+  to authorize an order.
 - **`alice analysis quant … --dates`** — opt-in date axis on a quant result
   (`dates[barId]`), to map a dumped series back to days.
 

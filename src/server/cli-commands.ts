@@ -74,6 +74,7 @@ export const CLI_EXPORTS: Record<string, CliExport> = {
         // path-dependent backtest. The Retrospective / Time-Machine primitives.
         snapshot: 'marketSnapshot',
         simulate: 'simulate',
+        backtest: 'trBacktest',
       },
       think: {
         calc: 'calculate',
