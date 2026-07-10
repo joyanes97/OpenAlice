@@ -106,6 +106,9 @@ the full workflow):
   `--commission-bps` and `--slippage-bps` to conservative per-side estimates.
   Output excludes fixed broker fees and taxes; use it to reject weak ideas, never
   to authorize an order.
+- **`alice analysis propose --ticker AAPL --lenses '{...}' --requested-position-pct 5`** —
+  canonical five-lens proposal. BUY requires a non-negative backtest alpha and
+  the result is always research-only; it cannot place or stage an order.
 - **`alice analysis quant … --dates`** — opt-in date axis on a quant result
   (`dates[barId]`), to map a dumped series back to days.
 

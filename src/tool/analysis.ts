@@ -5,6 +5,7 @@ import { resolve } from 'path'
 
 const PROBE = resolve(process.cwd(), 'scripts/analysis/backtest_probe.py')
 const PYTR_LOCAL = process.env['PYTR_LOCAL'] ?? '/tmp/opencode/pytr-local'
+const score = z.number().min(1).max(5)
 
 function runBacktest(ticker: string, strategy: string, months: number, commissionBps: number, slippageBps: number): unknown {
   const pythonPath = [PYTR_LOCAL, process.env['PYTHONPATH'] ?? ''].filter(Boolean).join(':')
@@ -63,6 +64,58 @@ export function createAnalysisTools() {
       }),
       execute: async ({ ticker, strategy, months, commissionBps, slippageBps }) =>
         runBacktest(ticker, strategy, months, commissionBps, slippageBps),
+    }),
+    trCreateProposal: tool({
+      description:
+        'Create a canonical, read-only trading research proposal from five scored lenses and optional backtest metrics. ' +
+        'It never stages, commits, or sends an order. BUY requires non-negative backtest alpha; position sizing is capped at 10%.',
+      inputSchema: z.object({
+        ticker: z.string().regex(/^[A-Za-z0-9.^=-]{1,20}$/, 'invalid Yahoo Finance ticker'),
+        lenses: z.object({
+          fundamentals: score,
+          technical: score,
+          sentiment: score,
+          macroSector: score,
+          portfolioRisk: score,
+        }),
+        requestedPositionPct: z.number().min(0).max(10),
+        backtest: z.object({
+          strategy: z.enum(['sma', 'rsi', 'momentum']),
+          alphaPct: z.number(),
+          maxDrawdownPct: z.number().max(0),
+          sharpeRatio: z.number(),
+          commissionBps: z.number().min(0).max(500),
+          slippageBps: z.number().min(0).max(500),
+        }).optional(),
+      }),
+      execute: async ({ ticker, lenses, requestedPositionPct, backtest }) => {
+        const weightedScore =
+          lenses.fundamentals * .30 +
+          lenses.technical * .25 +
+          lenses.sentiment * .20 +
+          lenses.macroSector * .15 +
+          lenses.portfolioRisk * .10
+        const roundedScore = Number(weightedScore.toFixed(2))
+        const baseSignal = roundedScore >= 4 ? 'BUY' : roundedScore < 2.5 ? 'SELL' : 'HOLD'
+        const signal = baseSignal === 'BUY' && (!backtest || backtest.alphaPct < 0) ? 'HOLD' : baseSignal
+        const confidence = roundedScore >= 4.5 ? 'HIGH' : roundedScore >= 3.5 ? 'MEDIUM' : 'LOW'
+        return {
+          ticker: ticker.toUpperCase(),
+          signal,
+          confidence,
+          weightedScore: roundedScore,
+          requestedPositionPct,
+          approvedPositionPct: signal === 'BUY' ? requestedPositionPct : 0,
+          lenses,
+          ...(backtest ? { backtest } : {}),
+          reviewRequired: true,
+          executionPermitted: false,
+          warnings: [
+            ...(baseSignal === 'BUY' && signal !== 'BUY' ? ['BUY downgraded to HOLD: backtest alpha is missing or negative.'] : []),
+            'Research proposal only. Broker execution remains a separate UTA approval flow.',
+          ],
+        }
+      },
     }),
   }
 }

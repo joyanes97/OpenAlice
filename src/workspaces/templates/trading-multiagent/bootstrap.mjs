@@ -101,6 +101,10 @@ Use the defaults (10 commission bps + 5 slippage bps per side) only when no brok
 
 ## Step 5 — Output
 
+Before writing the report, call \`alice analysis propose\` with all five lens scores,
+requested position size, and backtest metrics. Use its canonical signal and warnings;
+it is research-only and cannot execute an order.
+
 Save to \`recommendations/<TICKER>_<DATE>.md\`:
 
 \`\`\`

@@ -75,6 +75,7 @@ export const CLI_EXPORTS: Record<string, CliExport> = {
         snapshot: 'marketSnapshot',
         simulate: 'simulate',
         backtest: 'trBacktest',
+        propose: 'trCreateProposal',
       },
       think: {
         calc: 'calculate',
