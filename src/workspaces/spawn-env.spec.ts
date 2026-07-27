@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { describe, it, expect } from 'vitest'
@@ -45,7 +45,25 @@ describe('buildSpawnEnv', () => {
     expect(out['PWD']).toBe('/ws/dir')
   })
 
-  it('strips launcher-owned tool/MCP env from the parent and only trusts extras', () => {
+  it('emits one canonical PATH key after augmenting a Windows-style Path', () => {
+    const root = mkdtempSync(join(tmpdir(), 'openalice-path-case-'))
+    try {
+      const shim = join(root, 'cli-bin')
+      mkdirSync(shim, { recursive: true })
+
+      const out = buildSpawnEnv(
+        { Path: join(root, 'host-bin') },
+        { OPENALICE_WORKSPACE_CLI_BIN_PATH: shim },
+      )
+
+      expect(Object.keys(out).filter((key) => key.toUpperCase() === 'PATH')).toEqual(['PATH'])
+      expect(out['PATH'].split(delimiter)[0]).toBe(shim)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('strips launcher-owned tool/MCP and stale terminal color env from the parent', () => {
     const out = buildSpawnEnv(
       {
         OPENALICE_MCP_URL: 'http://stale/mcp',
@@ -58,16 +76,14 @@ describe('buildSpawnEnv', () => {
       {
         OPENALICE_TOOL_URL: '/cli',
         OPENALICE_TOOL_SOCKET: '/tmp/current.sock',
-        OPENALICE_TERMINAL_THEME: 'dark',
-        COLORFGBG: '15;0',
       },
     )
     expect(out['OPENALICE_MCP_URL']).toBeUndefined()
     expect(out['OPENCODE_CONFIG_CONTENT']).toBeUndefined()
     expect(out['OPENALICE_TOOL_URL']).toBe('/cli')
     expect(out['OPENALICE_TOOL_SOCKET']).toBe('/tmp/current.sock')
-    expect(out['OPENALICE_TERMINAL_THEME']).toBe('dark')
-    expect(out['COLORFGBG']).toBe('15;0')
+    expect(out['OPENALICE_TERMINAL_THEME']).toBeUndefined()
+    expect(out['COLORFGBG']).toBeUndefined()
   })
 
   it('defaults terminal locale to UTF-8 without overriding explicit locale', () => {
@@ -80,6 +96,29 @@ describe('buildSpawnEnv', () => {
 
     const lcAll = buildSpawnEnv({ LC_ALL: 'C.UTF-8' })
     expect(lcAll['LC_CTYPE']).toBeUndefined()
+  })
+
+  it('drops inherited color-disable switches without erasing explicit color preferences', () => {
+    const inherited = buildSpawnEnv({
+      NO_COLOR: '1',
+      FORCE_COLOR: '0',
+      CLICOLOR: '0',
+    })
+    expect(inherited['NO_COLOR']).toBeUndefined()
+    expect(inherited['FORCE_COLOR']).toBeUndefined()
+    expect(inherited['CLICOLOR']).toBeUndefined()
+
+    const enabled = buildSpawnEnv({ FORCE_COLOR: '3', CLICOLOR: '1' })
+    expect(enabled['FORCE_COLOR']).toBe('3')
+    expect(enabled['CLICOLOR']).toBe('1')
+
+    const explicit = buildSpawnEnv(
+      { NO_COLOR: '1', FORCE_COLOR: '0', CLICOLOR: '0' },
+      { FORCE_COLOR: '2', CLICOLOR: '1' },
+    )
+    expect(explicit['NO_COLOR']).toBeUndefined()
+    expect(explicit['FORCE_COLOR']).toBe('2')
+    expect(explicit['CLICOLOR']).toBe('1')
   })
 
   it.skipIf(process.platform === 'win32')('adds common user CLI bins missing from GUI app PATH', () => {
@@ -114,6 +153,60 @@ describe('buildSpawnEnv', () => {
       expect(path[0]).toBe(dir)
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('prepends OpenAlice shim, managed Pi, then managed toolchain paths', () => {
+    const root = mkdtempSync(join(tmpdir(), 'openalice-managed-runtime-'))
+    try {
+      const shim = join(root, 'cli-bin')
+      const piDir = join(root, 'pi')
+      const pi = join(piDir, 'pi')
+      const toolBin = join(root, 'tool-bin')
+      mkdirSync(shim, { recursive: true })
+      mkdirSync(piDir, { recursive: true })
+      mkdirSync(toolBin, { recursive: true })
+      writeFileSync(pi, '')
+
+      const path = buildCliPath({
+        HOME: tmpdir(),
+        PATH: '/usr/bin:/bin',
+        OPENALICE_WORKSPACE_CLI_BIN_PATH: shim,
+        OPENALICE_MANAGED_PI_PATH: pi,
+        OPENALICE_MANAGED_TOOLCHAIN_PATH: toolBin,
+      }).split(delimiter)
+
+      expect(path.slice(0, 3)).toEqual([shim, piDir, toolBin])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not add the managed Pi npm cli directory to PATH', () => {
+    const root = mkdtempSync(join(tmpdir(), 'openalice-managed-pi-npm-'))
+    try {
+      const shim = join(root, 'cli-bin')
+      const piDist = join(root, 'vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist')
+      const piCli = join(piDist, 'cli.js')
+      const toolBin = join(root, 'tool-bin')
+      mkdirSync(shim, { recursive: true })
+      mkdirSync(piDist, { recursive: true })
+      mkdirSync(toolBin, { recursive: true })
+      writeFileSync(piCli, '')
+
+      const path = buildCliPath({
+        HOME: tmpdir(),
+        PATH: '/usr/bin:/bin',
+        OPENALICE_WORKSPACE_CLI_BIN_PATH: shim,
+        OPENALICE_MANAGED_PI_PATH: piCli,
+        OPENALICE_MANAGED_PI_NODE_PATH: '/Applications/OpenAlice.app/Contents/MacOS/OpenAlice',
+        OPENALICE_MANAGED_TOOLCHAIN_PATH: toolBin,
+      }).split(delimiter)
+
+      expect(path.slice(0, 2)).toEqual([shim, toolBin])
+      expect(path).not.toContain(piDist)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 

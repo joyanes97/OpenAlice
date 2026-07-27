@@ -3,6 +3,7 @@ import type { IssuePriority, IssueStatus } from '../../api/issues'
 import {
   demoIssueAddComment,
   demoIssueDetail,
+  demoIssueRetry,
   demoIssueUpdate,
   demoIssuesSnapshot,
 } from '../fixtures/issues'
@@ -60,12 +61,13 @@ export const issuesHandlers = [
       priority?: unknown
       assignee?: unknown
       agent?: unknown
+      what?: unknown
     } | null
     if (!body || typeof body !== 'object') {
       return HttpResponse.json({ error: 'invalid_body' }, { status: 400 })
     }
 
-    const patch: { status?: IssueStatus; priority?: IssuePriority; assignee?: string; agent?: string | null } = {}
+    const patch: { status?: IssueStatus; priority?: IssuePriority; assignee?: string; agent?: string | null; what?: string } = {}
     if (body.status !== undefined) {
       if (!ISSUE_STATUSES.includes(body.status as IssueStatus)) {
         return HttpResponse.json({ error: 'invalid_status' }, { status: 400 })
@@ -97,11 +99,18 @@ export const issuesHandlers = [
         patch.agent = agent
       }
     }
+    if (body.what !== undefined) {
+      if (typeof body.what !== 'string' || !body.what.trim()) {
+        return HttpResponse.json({ error: 'invalid_what' }, { status: 400 })
+      }
+      patch.what = body.what.trim()
+    }
     if (
       patch.status === undefined &&
       patch.priority === undefined &&
       patch.assignee === undefined &&
       patch.agent === undefined
+      && patch.what === undefined
     ) {
       return HttpResponse.json({ error: 'no_fields' }, { status: 400 })
     }
@@ -127,5 +136,15 @@ export const issuesHandlers = [
     return detail
       ? HttpResponse.json(detail)
       : HttpResponse.json({ error: 'not_found' }, { status: 404 })
+  }),
+
+  http.post('/api/issues/:wsId/:id/retry', ({ params }) => {
+    const detail = demoIssueRetry(String(params.wsId), String(params.id))
+    return detail
+      ? HttpResponse.json(detail, { status: 202 })
+      : HttpResponse.json({
+          error: 'not_retryable',
+          message: 'Only the latest failed or interrupted scheduled run can be retried.',
+        }, { status: 409 })
   }),
 ]

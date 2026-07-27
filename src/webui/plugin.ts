@@ -5,16 +5,15 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { rm } from 'node:fs/promises'
 import { uiBundlePath } from '@/core/paths.js'
 import type { Plugin, EngineContext } from '../core/types.js'
-import type { ProducerHandle } from '../core/producer.js'
 import { SessionStore } from '../core/session.js'
 import { readWebSubchannels } from '../core/config.js'
 import { createMediaRoutes } from './routes/media.js'
 import { createChannelsRoutes, type SSEClient } from './routes/channels.js'
 import { createConfigRoutes, createMarketDataRoutes } from './routes/config.js'
-import { createEventsRoutes } from './routes/events.js'
-import { createTopologyRoutes } from './routes/topology.js'
+import { createConnectorRoutes } from './routes/connectors.js'
 import { createScheduleRoutes } from './routes/schedule.js'
 import { createIssuesRoutes } from './routes/issues.js'
+import { createInquiryRoutes } from './routes/inquiries.js'
 import { createTradingProxyRoutes } from './routes/trading-proxy.js'
 import { createTradingConfigRoutes } from './routes/trading-config.js'
 import { createToolsRoutes } from './routes/tools.js'
@@ -29,9 +28,12 @@ import { createEntityRoutes } from './routes/entities.js'
 import { createWikilinkRoutes } from './routes/wikilink.js'
 import { createVersionRoutes } from './routes/version.js'
 import { createAuthRoutes } from './routes/auth.js'
+import { createPreferencesRoutes } from './routes/preferences.js'
+import { initializeWindowsWorkspaceShellPreference } from '../core/windows-workspace-shell.js'
 import { createAuthMiddleware } from './middleware/auth.js'
-import { mountOpenTypeBB } from '../server/opentypebb.js'
+import { mountMarketDataCompat } from '../server/market-data-compat.js'
 import { buildSDKCredentials } from '../domain/market-data/credential-map.js'
+import { resolveUTAUrl } from '../services/uta-supervisor/url.js'
 import { createWorkspaceService, type WorkspaceService } from '../workspaces/service.js'
 
 /** Cross-plugin hand-off for WorkspaceService. WebPlugin creates it
@@ -46,6 +48,7 @@ export function createWorkspaceServiceRef(): WorkspaceServiceRef {
   return { current: null }
 }
 import { createWorkspaceRoutes } from './routes/workspaces.js'
+import { createAgentRuntimeRoutes } from './routes/agent-runtimes.js'
 import { createHeadlessRoutes } from './routes/headless.js'
 import { attachWorkspacesWS, type AttachedWS } from './workspaces-ws.js'
 import { attachWorkspacesIpc, type AttachedWorkspaceIpc } from './workspaces-ipc.js'
@@ -75,7 +78,6 @@ export class WebPlugin implements Plugin {
   private server: ReturnType<typeof serve> | null = null
   /** SSE clients grouped by channel ID. Default channel: 'default'. */
   private sseByChannel = new Map<string, Map<string, SSEClient>>()
-  private ingestProducer?: ProducerHandle<readonly ['agent.work.requested']>
   private workspaceService: WorkspaceService | null = null
   private workspacesWs: AttachedWS | null = null
   private workspacesIpc: AttachedWorkspaceIpc | null = null
@@ -152,6 +154,10 @@ export class WebPlugin implements Plugin {
       this.sseByChannel.set(ch.id, new Map())
     }
 
+    // Windows-only machine preference. This returns before filesystem access
+    // on macOS/Linux, so their startup and shell selection remain untouched.
+    await initializeWindowsWorkspaceShellPreference()
+
     const app = new Hono()
 
     app.onError((err: Error, c: Context) => {
@@ -202,38 +208,28 @@ export class WebPlugin implements Plugin {
       disabled: authDisabled,
     }))
 
-    // ==================== Producers ====================
-    // Chat message.received/sent events go through ConnectorCenter's shared
-    // `connectors` producer — see `ctx.connectorCenter.emitMessage*`.
-    //
-    // webhook-ingest: POST /api/events/ingest — enumerates its concrete emits so
-    // each external type shows up on the Flow graph as a real injection edge.
-    // Extend this tuple when adding new `external: true` event types.
-    this.ingestProducer = ctx.listenerRegistry.declareProducer({
-      name: 'webhook-ingest',
-      emits: ['agent.work.requested'] as const,
-    })
-
     // ==================== Mount route modules ====================
-    // /api/channels is the last surviving piece of the legacy web-chat
-    // stack — kept (vestigial) only because the surviving TabStrip reads
-    // channel titles. Slated for end-to-end removal (tracked in Linear).
+    // /api/channels remains the compatibility boundary for legacy web
+    // channels; Workspace Chat uses the Workspace APIs instead.
     app.route('/api/channels', createChannelsRoutes({ sessions, sseByChannel: this.sseByChannel }))
     app.route('/api/media', createMediaRoutes())
     app.route('/api/config', createConfigRoutes({ ctx }))
+    app.route('/api/connectors', createConnectorRoutes())
+    app.route('/api/preferences', createPreferencesRoutes())
     app.route('/api/market-data', createMarketDataRoutes(ctx))
-    app.route('/api/events', createEventsRoutes({ ctx, ingestProducer: this.ingestProducer }))
-    app.route('/api/topology', createTopologyRoutes(ctx))
     app.route('/api/trading/config', createTradingConfigRoutes(ctx))
-    // `/api/trading/*` and `/api/simulator/*` are proxied to the co-located
-    // UTA service (decision #2 of UTA-split v1 — UI stays single-origin).
-    // Trading domain + the MockBroker god-view live on UTA's side.
-    const utaUrl = process.env['OPENALICE_UTA_URL']
-    if (!utaUrl) {
-      throw new Error('OPENALICE_UTA_URL not set — UTA service should be spawned by Guardian before Alice boots')
-    }
-    app.route('/api/trading', createTradingProxyRoutes({ utaBaseUrl: utaUrl }))
-    app.route('/api/simulator', createTradingProxyRoutes({ utaBaseUrl: utaUrl }))
+    // `/api/trading/*` and `/api/simulator/*` are proxied to the UTA carrier.
+    // UTA is optional, so the proxy owns the unavailable response instead of
+    // making WebPlugin startup fail.
+    const utaProxy = createTradingProxyRoutes({
+      utaBaseUrl: resolveUTAUrl(),
+      getPolicy: ctx.tradingModePolicy,
+    })
+    app.route('/api/trading', utaProxy)
+    app.route('/api/simulator', createTradingProxyRoutes({
+      utaBaseUrl: resolveUTAUrl(),
+      getPolicy: ctx.tradingModePolicy,
+    }))
     app.route('/api/tools', createToolsRoutes(ctx.toolCenter))
     app.route('/api/agent-status', createAgentStatusRoutes(ctx))
     app.route('/api/news', createNewsRoutes(ctx))
@@ -258,9 +254,14 @@ export class WebPlugin implements Plugin {
     this.workspacesIpc = attachWorkspacesIpc(this.workspaceService)
     if (this.workspaceServiceRef) this.workspaceServiceRef.current = this.workspaceService
     app.route('/api/workspaces', createWorkspaceRoutes(this.workspaceService))
+    app.route('/api/agent-runtimes', createAgentRuntimeRoutes(this.workspaceService))
     app.route('/api/headless', createHeadlessRoutes(this.workspaceService))
     app.route('/api/schedule', createScheduleRoutes(this.workspaceService))
     app.route('/api/issues', createIssuesRoutes(this.workspaceService))
+    app.route('/api/inquiries', createInquiryRoutes({
+      service: this.workspaceService,
+      inboxStore: ctx.inboxStore,
+    }))
     // Tracked entities — read surface for the Tracked tab. Mounted here (not
     // with the other /api/* routes above) because backlink scanning needs the
     // workspace registry, which only exists once workspaceService is created.
@@ -276,10 +277,10 @@ export class WebPlugin implements Plugin {
       createWikilinkRoutes({ entityStore: ctx.entityStore, service: this.workspaceService }),
     )
 
-    // ==================== Mount opentypebb (market data HTTP) ====================
-    // opentypebb is Alice's first-class market-data package; its router is
-    // merged into this app so UI and external consumers hit a single port.
-    mountOpenTypeBB(app, ctx.bbEngine, {
+    // ==================== Embedded market-data compatibility HTTP ====================
+    // Remaining provider routes share Alice's port and auth boundary. New
+    // product contracts belong to TraderHub and BarService.
+    mountMarketDataCompat(app, ctx.bbEngine, {
       basePath: '/api/market-data-v1',
       // Read config lazily so UI edits to marketData.providerKeys /
       // marketData.providers take effect on the next request — no remount
@@ -341,8 +342,6 @@ export class WebPlugin implements Plugin {
 
   async stop() {
     this.sseByChannel.clear()
-    this.ingestProducer?.dispose()
-    this.ingestProducer = undefined
     this.webIpc?.dispose()
     this.webIpc = null
     this.cliSocketServer?.close()

@@ -17,20 +17,20 @@ export function IssuePage() {
     <div className="flex flex-col flex-1 min-h-0">
       <PageHeader
         title="Issues"
-        description="Work tracked across every workspace — what each agent is doing, and what's scheduled to run."
+        description="Work tracked across every workspace."
         right={
           <button
             type="button"
             onClick={() => openOrFocus({ kind: 'settings', params: { category: 'issues' } })}
             title="Issue settings"
             aria-label="Issue settings"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-bg-secondary text-muted transition-colors hover:border-accent/50 hover:text-text"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-secondary text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
           >
             <Settings size={15} aria-hidden />
           </button>
         }
       />
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 md:px-6 py-5">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-4 sm:px-4 md:px-6 md:py-5">
         <IssuesBoard />
       </div>
     </div>

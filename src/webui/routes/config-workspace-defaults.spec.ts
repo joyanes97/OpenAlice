@@ -15,6 +15,10 @@ let defaultsStore: Record<string, WorkspaceCredentialDefault> = {}
 let defaultAgentStore: string | null = null
 let issueDefaultAgentStore: string | null = null
 
+const { probeByWireShapeMock } = vi.hoisted(() => ({
+  probeByWireShapeMock: vi.fn(async () => ({ text: 'real probe' })),
+}))
+
 vi.mock('../../core/config.js', async () => {
   const actual = await vi.importActual<typeof import('../../core/config.js')>('../../core/config.js')
   return {
@@ -23,7 +27,9 @@ vi.mock('../../core/config.js', async () => {
     readWorkspaceCredentialDefaults: vi.fn(async () => ({ ...defaultsStore })),
     readWorkspaceDefaultAgent: vi.fn(async () => defaultAgentStore),
     readIssueDefaultAgent: vi.fn(async () => issueDefaultAgentStore),
-    writeWorkspaceCredentialDefaults: vi.fn(async (next: Record<string, WorkspaceCredentialDefault>) => {
+    writeWorkspaceCreationDefaults: vi.fn(async (
+      next: Record<string, WorkspaceCredentialDefault>,
+    ) => {
       // Mirror the real writer: drop empty slugs.
       const cleaned: Record<string, WorkspaceCredentialDefault> = {}
       for (const [k, v] of Object.entries(next)) if (v.credentialSlug) cleaned[k] = v
@@ -51,6 +57,10 @@ vi.mock('../../core/config.js', async () => {
   }
 })
 
+vi.mock('../../workspaces/agent-probe.js', () => ({
+  probeByWireShape: probeByWireShapeMock,
+}))
+
 import { createConfigRoutes } from './config.js'
 
 async function req(routes: ReturnType<typeof createConfigRoutes>, method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown) {
@@ -65,6 +75,10 @@ async function req(routes: ReturnType<typeof createConfigRoutes>, method: 'GET' 
 }
 
 beforeEach(() => {
+  delete process.env.OPENALICE_ONBOARDING_TEST
+  delete process.env.OPENALICE_CREDENTIAL_TEST_MODE
+  probeByWireShapeMock.mockClear()
+  probeByWireShapeMock.mockResolvedValue({ text: 'real probe' })
   credStore = {
     'anthropic-1': { vendor: 'anthropic', authType: 'api-key', apiKey: 'sk-ant', wires: { anthropic: '' } },
     'openai-1': { vendor: 'openai', authType: 'api-key', apiKey: 'sk-oa', wires: { 'openai-responses': '', 'openai-chat': '' } },
@@ -75,6 +89,19 @@ beforeEach(() => {
   issueDefaultAgentStore = null
 })
 
+describe('generic config sections', () => {
+  it('rejects the retired global compaction policy', async () => {
+    const routes = createConfigRoutes()
+    const { status, body } = await req(routes, 'PUT', '/compaction', {
+      maxContextTokens: 200_000,
+      maxOutputTokens: 20_000,
+    })
+
+    expect(status).toBe(400)
+    expect(body!.error).toContain('Invalid section "compaction"')
+  })
+})
+
 describe('GET /workspace-credential-defaults', () => {
   it('returns current defaults + per-agent compatible slugs (wire funnel)', async () => {
     const routes = createConfigRoutes()
@@ -83,6 +110,7 @@ describe('GET /workspace-credential-defaults', () => {
     const { status, body } = await req(routes, 'GET', '/workspace-credential-defaults')
     expect(status).toBe(200)
     expect(body!.defaults).toEqual({ opencode: { credentialSlug: 'openai-1', model: 'gpt-5.5' } })
+    expect(body).not.toHaveProperty('contextWindow')
 
     const compat = body!.compatibleByAgent as Record<string, string[]>
     // claude speaks anthropic only.
@@ -111,6 +139,84 @@ describe('POST /credentials', () => {
     const slug = body!.slug
     expect(typeof slug).toBe('string')
     expect(credStore[slug as string]).toMatchObject({ lastModel: 'longmao-chat' })
+  })
+})
+
+describe('GET /credentials', () => {
+  it('returns the remembered model so editing does not replace it with the catalog default', async () => {
+    const routes = createConfigRoutes()
+    credStore['openai-1'] = {
+      ...credStore['openai-1']!,
+      lastModel: 'gpt-account-specific',
+    }
+
+    const { status, body } = await req(routes, 'GET', '/credentials')
+
+    expect(status).toBe(200)
+    const credentials = body!.credentials as Array<Record<string, unknown>>
+    expect(credentials.find((credential) => credential.slug === 'openai-1')).toMatchObject({
+      lastModel: 'gpt-account-specific',
+    })
+  })
+})
+
+describe('PUT /credentials/:slug', () => {
+  it('does not let an edit invalidate an explicit Workspace default protocol', async () => {
+    const routes = createConfigRoutes()
+    defaultsStore = {
+      pi: { credentialSlug: 'openai-1', wireShape: 'openai-chat' },
+    }
+    const before = credStore['openai-1']
+
+    const { status, body } = await req(routes, 'PUT', '/credentials/openai-1', {
+      vendor: 'openai',
+      wires: { anthropic: 'https://gateway.example/anthropic' },
+      apiKey: 'sk-oa',
+    })
+
+    expect(status).toBe(400)
+    expect(body!.error).toContain('Workspace default')
+    expect(credStore['openai-1']).toEqual(before)
+  })
+})
+
+describe('POST /credentials/test', () => {
+  const mockBody = {
+    wireShape: 'openai-chat',
+    baseUrl: 'http://127.0.0.1:0/v1',
+    apiKey: 'oa_test_ok',
+    model: 'openalice-onboarding-test',
+  }
+
+  it('uses the onboarding mock provider only when the test env enables it', async () => {
+    process.env.OPENALICE_ONBOARDING_TEST = '1'
+    process.env.OPENALICE_CREDENTIAL_TEST_MODE = 'mock'
+    const routes = createConfigRoutes()
+
+    const { body } = await req(routes, 'POST', '/credentials/test', mockBody)
+
+    expect(body).toEqual({ ok: true, response: 'OpenAlice onboarding mock credential is ready.' })
+    expect(probeByWireShapeMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects the onboarding mock provider with the wrong test key', async () => {
+    process.env.OPENALICE_ONBOARDING_TEST = '1'
+    process.env.OPENALICE_CREDENTIAL_TEST_MODE = 'mock'
+    const routes = createConfigRoutes()
+
+    const { body } = await req(routes, 'POST', '/credentials/test', { ...mockBody, apiKey: 'wrong' })
+
+    expect(body).toEqual({ ok: false, error: 'Use the onboarding test key "oa_test_ok".' })
+    expect(probeByWireShapeMock).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the real probe outside onboarding mock mode', async () => {
+    const routes = createConfigRoutes()
+
+    const { body } = await req(routes, 'POST', '/credentials/test', mockBody)
+
+    expect(body).toEqual({ ok: true, response: 'real probe' })
+    expect(probeByWireShapeMock).toHaveBeenCalledOnce()
   })
 })
 
@@ -167,20 +273,39 @@ describe('GET/PUT /issue-default-agent', () => {
 })
 
 describe('PUT /workspace-credential-defaults', () => {
-  it('replaces the map, keeps optional model, persists via the writer', async () => {
+  it('replaces the map, keeps optional model and wire, and derives known reasoning', async () => {
     const routes = createConfigRoutes()
     const { status, body } = await req(routes, 'PUT', '/workspace-credential-defaults', {
       defaults: {
-        opencode: { credentialSlug: 'openai-1', model: 'gpt-5.5' },
-        pi: { credentialSlug: 'anthropic-1' },
+        opencode: { credentialSlug: 'openai-1', model: 'gpt-5.5', wireShape: 'openai-responses', contextWindow: 512_000, reasoning: false },
+        pi: { credentialSlug: 'anthropic-1', reasoning: true },
       },
     })
     expect(status).toBe(200)
     expect(body!.defaults).toEqual({
-      opencode: { credentialSlug: 'openai-1', model: 'gpt-5.5' },
+      opencode: { credentialSlug: 'openai-1', model: 'gpt-5.5', wireShape: 'openai-responses', contextWindow: 512_000 },
       pi: { credentialSlug: 'anthropic-1' },
     })
     expect(defaultsStore).toEqual(body!.defaults)
+  })
+
+  it('binds an unknown-model reasoning override to the selected model id', async () => {
+    const routes = createConfigRoutes()
+    const { status, body } = await req(routes, 'PUT', '/workspace-credential-defaults', {
+      defaults: {
+        opencode: { credentialSlug: 'chat-1', model: 'private-model', reasoning: false },
+      },
+    })
+
+    expect(status).toBe(200)
+    expect(body!.defaults).toEqual({
+      opencode: {
+        credentialSlug: 'chat-1',
+        model: 'private-model',
+        reasoning: false,
+        reasoningModel: 'private-model',
+      },
+    })
   })
 
   it('drops an agent whose credentialSlug is empty ("don\'t seed")', async () => {
@@ -189,6 +314,25 @@ describe('PUT /workspace-credential-defaults', () => {
       defaults: { opencode: { credentialSlug: 'openai-1' }, pi: { credentialSlug: '' } },
     })
     expect(body!.defaults).toEqual({ opencode: { credentialSlug: 'openai-1' } })
+  })
+
+  it('rejects an explicit protocol the selected credential or agent cannot speak', async () => {
+    const routes = createConfigRoutes()
+    const { status, body } = await req(routes, 'PUT', '/workspace-credential-defaults', {
+      defaults: { codex: { credentialSlug: 'openai-1', wireShape: 'openai-chat' } },
+    })
+    expect(status).toBe(400)
+    expect(body!.error).toContain('codex cannot use openai-chat')
+    expect(defaultsStore).toEqual({})
+  })
+
+  it('validates context before writing either default', async () => {
+    const routes = createConfigRoutes()
+    const { status } = await req(routes, 'PUT', '/workspace-credential-defaults', {
+      defaults: { opencode: { credentialSlug: 'openai-1', contextWindow: -1 } },
+    })
+    expect(status).toBe(400)
+    expect(defaultsStore).toEqual({})
   })
 
   it('ignores unknown agent keys (only the four defaultable agents pass through)', async () => {

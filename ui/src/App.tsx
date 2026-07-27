@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { ActivityBar } from './components/ActivityBar'
 import { TabHost } from './components/TabHost'
 import { DesktopUpdatePrompt } from './components/DesktopUpdatePrompt'
@@ -17,6 +18,7 @@ export type Page =
   | 'chat' | 'inbox' | 'tracked' | 'workspaces' | 'portfolio' | 'news' | 'automation' | 'market'
   | 'issue'
   | 'trading-as-git'
+  | 'connectors'
   | 'settings' | 'dev'
 
 /** Subscribe to a CSS media query, SSR-safe (defaults to matched). */
@@ -46,6 +48,11 @@ function useMediaQuery(query: string): boolean {
 const useIsDesktop = () => useMediaQuery('(min-width: 768px)') // rail static
 const useHasRailText = () => useMediaQuery('(min-width: 960px)') // text rail allowed
 const useHasFullRail = () => useMediaQuery('(min-width: 1280px)') // full rail width
+const firstRunGuideEnabled = import.meta.env.VITE_OPENALICE_FIRST_RUN_GUIDE === '1'
+const FirstRunGuide = lazy(async () => {
+  const module = await import('./components/FirstRunGuide')
+  return { default: module.FirstRunGuide }
+})
 
 export function App() {
   return (
@@ -64,6 +71,8 @@ function AppShell() {
   const hasRailText = useHasRailText() // ≥960 — text rail is allowed
   const hasFullRail = useHasFullRail() // ≥1280 — full rail width
   const railMode = !isDesktop ? 'full' : hasFullRail ? 'full' : hasRailText ? 'narrow' : 'compact'
+  const location = useLocation()
+  const showFirstRunGuide = firstRunGuideEnabled && !location.pathname.startsWith('/design/')
 
   // When the rail becomes a static column, drop its mobile drawer state.
   useEffect(() => {
@@ -82,19 +91,19 @@ function AppShell() {
   }, [sidebarOpen])
 
   const mainContent = (
-    <main className="flex flex-col min-w-0 min-h-0 bg-bg h-full">
+    <main className="flex flex-col min-w-0 min-h-0 bg-background h-full">
       {/* Mobile header — visible only below md */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border/80 bg-bg-secondary shrink-0 md:hidden">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border/80 bg-secondary shrink-0 md:hidden">
         <button
           onClick={() => setSidebarOpen(true)}
-          className="text-text-muted hover:text-text p-1 -ml-1"
+          className="text-muted-foreground hover:text-foreground p-1 -ml-1"
           aria-label="Open menu"
         >
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
             <path d="M3 5h14M3 10h14M3 15h14" />
           </svg>
         </button>
-        <span className="text-sm font-semibold text-text">OpenAlice</span>
+        <span className="text-sm font-semibold text-foreground">OpenAlice</span>
       </div>
 
       <TabHost />
@@ -118,6 +127,11 @@ function AppShell() {
           {mainContent}
         </div>
         <UrlAdopter />
+        {showFirstRunGuide && (
+          <Suspense fallback={null}>
+            <FirstRunGuide />
+          </Suspense>
+        )}
       </div>
     </div>
   )

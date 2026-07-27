@@ -13,7 +13,7 @@ import type { ScheduleWhen } from './schedule'
  * store. An issue WITH a `when` is scheduled (the scanner fires it as a
  * headless run); an issue WITHOUT `when` is a pure tracked work item.
  *
- * Phase 1 is read-only and the list does NOT carry the markdown body — the
+ * Phase 1 is read-only and the list does NOT carry markdown What — the
  * Phase 2 detail view loads that on demand.
  *
  * Demo handlers MUST import these types (do not inline an ad-hoc shape):
@@ -22,13 +22,94 @@ import type { ScheduleWhen } from './schedule'
 
 export type IssueStatus = 'backlog' | 'todo' | 'in_progress' | 'done' | 'canceled'
 export type IssuePriority = 'urgent' | 'high' | 'medium' | 'low' | 'none'
+export type IssueAutomationHealthState =
+  | 'inactive'
+  | 'not_started'
+  | 'due'
+  | 'running'
+  | 'healthy'
+  | 'interrupted'
+  | 'failed'
+  | 'blocked'
+
+export interface IssueAutomationHealth {
+  state: IssueAutomationHealthState
+  message: string
+  latestTaskId?: string
+}
+export type IssueProvenanceAction = 'created' | 'updated' | 'commented' | 'sent' | 'decided' | 'reconstructed'
+export type IssueProvenanceOrigin =
+  | {
+      kind: 'session'
+      workspaceId: string
+      resumeId: string
+      agent: string
+      execution?:
+        | { kind: 'headless'; taskId: string }
+        | { kind: 'interactive'; sessionRecordId: string }
+    }
+  | { kind: 'human' }
+  | { kind: 'external'; system: string }
+  | { kind: 'unknown'; reason: string }
+
+export interface IssueProvenanceRecord {
+  id: string
+  action: IssueProvenanceAction
+  origin: IssueProvenanceOrigin
+  at: number
+  mutation?: {
+    fields: Array<{ field: string; before?: string; after?: string }>
+  }
+}
+
+/** Human-facing Issue timeline. Runtime executions stay in `runs`. */
+export type IssueActivityRecord =
+  | ({ kind: 'change' } & IssueProvenanceRecord)
+  | { kind: 'comment'; id: string; at: number; comment: IssueComment }
+
+export type IssueCommentDelivery =
+  | { state: 'pending'; targetResumeId: string; taskId: string }
+  | { state: 'replied'; targetResumeId: string; taskId: string; replyCommentId: string }
+  | { state: 'failed'; targetResumeId: string; taskId?: string; error: string }
+
+export interface IssueComment {
+  id: string
+  author: string
+  at: string
+  /** Full markdown payload. Comments deliberately do not share the agent-editable What file. */
+  markdown: string
+  replyTo?: string
+  delivery?: IssueCommentDelivery
+}
+
+export type IssueRunFailureKind =
+  | 'system_paused'
+  | 'launcher_restarted'
+  | 'timeout'
+  | 'launch_error'
+  | 'process_exit'
+  | 'runtime_error'
+
+export interface IssueRunFailure {
+  kind: IssueRunFailureKind
+  title: string
+  message: string
+  retryable: boolean
+}
+
+/** Issue-safe headless projection. Native runtime session ids remain hidden;
+ * failure is a read-side explanation derived by the backend. */
+export interface IssueRunRecord extends HeadlessTaskRecord {
+  issueId?: string
+  failure?: IssueRunFailure
+}
 
 export interface IssueListItem {
   id: string
   title: string
   status: IssueStatus
   priority: IssuePriority
-  /** "human" | "ws:<tag|id>" | "unassigned"; missing assignee defaults to the owning workspace. */
+  /** @workspace | @new | @human | @unassigned | exact @resumeId Session signature. */
   assignee: string
   /** Adapter id for the scheduled fire override, if set. */
   agent?: string
@@ -38,6 +119,8 @@ export interface IssueListItem {
   lastFiredAtMs?: number | null
   /** Computed next fire (epoch ms) — scheduled issues only. */
   nextDueAtMs?: number | null
+  /** Live scheduler/worker health; present iff the Issue has a schedule. */
+  automationHealth?: IssueAutomationHealth
   /**
    * True iff this issue's NAME (title, case-insensitive) is also claimed by an
    * issue in a DIFFERENT workspace. A `[[name]]` is a global team object, so a
@@ -101,39 +184,40 @@ export interface WikilinkResolution {
 
 // ==================== Detail (Phase 2a) ====================
 // GET /api/issues/:wsId/:id — the read-only DETAIL shape: one issue's full
-// fields INCLUDING the markdown body and (iff scheduled) its firing markers +
+// fields INCLUDING markdown What and (iff scheduled) its firing markers +
 // scheduling frontmatter, plus that issue's headless run history (its Activity
 // feed). Mirrors the server's `IssueDetail` / `IssueDetailIssue` in
 // `src/workspaces/issues/board.ts`. Demo handlers MUST import these types.
 
-/** One issue's full detail fields: the board row's fields + the markdown body +
- *  the scheduling frontmatter (`what`/`agent`). Markers present iff scheduled. */
+/** One issue's full detail fields plus canonical markdown What. */
 export interface IssueDetailIssue {
   id: string
   title: string
-  /** Markdown description body (the list omits this; the detail loads it). */
-  body: string
+  /** Human-visible work definition; exact scheduled prompt. */
+  what: string
   status: IssueStatus
   priority: IssuePriority
-  /** "human" | "ws:<tag|id>" | "unassigned"; missing assignee defaults to the owning workspace. */
+  /** @workspace | @new | @human | @unassigned | exact @resumeId Session signature. */
   assignee: string
   /** Present iff the issue self-schedules. */
   when?: ScheduleWhen
-  /** Scheduled fire prompt override (frontmatter `what`), if set. */
-  what?: string
   /** Adapter id for the scheduled fire (frontmatter `agent`), if set. */
   agent?: string
   /** Scanner last-fired marker (epoch ms) — scheduled issues only. */
   lastFiredAtMs?: number | null
   /** Computed next fire (epoch ms) — scheduled issues only. */
   nextDueAtMs?: number | null
+  /** Live scheduler/worker health; present iff the Issue has a schedule. */
+  automationHealth?: IssueAutomationHealth
 }
 
-/** GET /api/issues/:wsId/:id — one issue + its run history (Activity feed). */
+/** GET /api/issues/:wsId/:id — one issue + Activity, Runs, and reports. */
 export interface IssueDetail {
   issue: IssueDetailIssue
+  /** Structured markdown comments from `<id>.comments.json`. */
+  comments?: IssueComment[]
   /** This issue's headless runs (wsId + issueId match), newest first. */
-  runs: HeadlessTaskRecord[]
+  runs: IssueRunRecord[]
   /**
    * The inbox reports this issue produced — every inbox entry from this
    * workspace whose server-stamped `origin.issueId` is this issue, newest-first.
@@ -142,6 +226,10 @@ export interface IssueDetail {
    * issue with no reports yields an empty array.
    */
   inboxReports?: InboxEntry[]
+  /** Raw provenance edges. Nearby updates from one origin are coalesced. */
+  provenance?: IssueProvenanceRecord[]
+  /** Changes + comments, oldest first. Optional for older/demo servers. */
+  activity?: IssueActivityRecord[]
 }
 
 export const issuesApi = {
@@ -150,7 +238,7 @@ export const issuesApi = {
     return fetchJson<IssueSnapshot>('/api/issues')
   },
 
-  /** Read-only detail: one issue's full fields + markdown body + its run feed. */
+  /** Read-only detail: one issue's full fields + canonical What + its run feed. */
   async getDetail(wsId: string, id: string): Promise<IssueDetail> {
     return fetchJson<IssueDetail>(
       `/api/issues/${encodeURIComponent(wsId)}/${encodeURIComponent(id)}`,
@@ -170,7 +258,7 @@ export const issuesApi = {
 
   /**
    * Human write path: patch one issue's editable fields (any subset of
-   * status / priority / assignee / agent). `agent: null` clears the scheduled
+   * status / priority / assignee / agent / what). `agent: null` clears the scheduled
    * runtime override so the workspace default applies. Returns the SAME detail
    * shape as `getDetail` so the caller can apply it directly (refetch-free).
    * Working-tree write on the server, no commit.
@@ -178,7 +266,7 @@ export const issuesApi = {
   async update(
     wsId: string,
     id: string,
-    patch: { status?: IssueStatus; priority?: IssuePriority; assignee?: string; agent?: string | null },
+    patch: { status?: IssueStatus; priority?: IssuePriority; assignee?: string; agent?: string | null; what?: string },
   ): Promise<IssueDetail> {
     return fetchJson<IssueDetail>(
       `/api/issues/${encodeURIComponent(wsId)}/${encodeURIComponent(id)}`,
@@ -187,15 +275,22 @@ export const issuesApi = {
   },
 
   /**
-   * Human write path: append a comment (author fixed to "human" server-side) to
-   * the issue body's `## Comments` section. Returns the updated detail — the
-   * returned `body` already carries the new comment, so the existing markdown
-   * renderer surfaces it with no client-side re-parsing.
+   * Human write path: append a structured markdown comment (author fixed to
+   * "human" server-side) to the Issue's JSON sidecar.
    */
   async addComment(wsId: string, id: string, text: string): Promise<IssueDetail> {
     return fetchJson<IssueDetail>(
       `/api/issues/${encodeURIComponent(wsId)}/${encodeURIComponent(id)}/comments`,
       { method: 'POST', headers, body: JSON.stringify({ text }) },
+    )
+  },
+
+  /** Retry the latest failed/interrupted scheduled run with its live Issue
+   * prompt, owner, and runtime. The backend preserves the cadence marker. */
+  async retry(wsId: string, id: string): Promise<IssueDetail> {
+    return fetchJson<IssueDetail>(
+      `/api/issues/${encodeURIComponent(wsId)}/${encodeURIComponent(id)}/retry`,
+      { method: 'POST', headers },
     )
   },
 }

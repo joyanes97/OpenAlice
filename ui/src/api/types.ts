@@ -68,13 +68,43 @@ export interface SdkAdapterInfo {
 
 // ==================== AI Provider Presets ====================
 
-export type WireShape = 'anthropic' | 'openai-chat' | 'openai-responses'
+export type WireShape = 'anthropic' | 'google-generative-ai' | 'openai-chat' | 'openai-responses'
 
 /** A region + the per-wire-shape endpoints it offers. */
 export interface SerializedRegion {
   id: string
   label: string
   wires: Partial<Record<WireShape, string>>
+}
+
+export interface CredentialSetupGuide {
+  apiKeyLabel: string
+  apiKeyPlaceholder?: string
+  apiKeyHelp: string
+  modelHelp: string
+  regionHelp?: string
+}
+
+export type ModelReasoningMode = 'none' | 'optional' | 'adaptive' | 'required'
+export type ModelReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export interface ModelSemantics {
+  contextWindow?: number
+  maxOutputTokens?: number
+  reasoning?: {
+    mode: ModelReasoningMode
+    efforts?: ModelReasoningEffort[]
+    defaultEffort?: ModelReasoningEffort
+    defaultEnabled?: boolean
+    interleaved?: boolean
+  }
+}
+
+export interface PresetModel {
+  id: string
+  label: string
+  /** Absent means the catalog has no verified facts for this exact model id. */
+  semantics?: ModelSemantics
 }
 
 export interface Preset {
@@ -85,9 +115,13 @@ export interface Preset {
   hint?: string
   defaultName: string
   schema: JsonSchema
+  /** Rich catalog entries; older servers may only expose schema.model.oneOf. */
+  models?: PresetModel[]
   /** Regions × their per-shape endpoints — the form picks a region; the
    *  credential captures that region's whole wires map (its capabilities). */
   regions?: SerializedRegion[]
+  /** Provider-aware guidance for the API-key credential form. */
+  setup?: CredentialSetupGuide
 }
 
 /** Subset of JSON Schema types we use for form rendering. */
@@ -153,6 +187,9 @@ export type ChatHistoryItem =
 
 // ==================== Config ====================
 
+export type TradingMode = 'lite' | 'readonly' | 'pro'
+export type TradingModeSource = 'env' | 'config' | 'auto'
+
 export interface AIProviderConfig {
   apiKeys: { anthropic?: string; openai?: string; google?: string }
   profiles: Record<string, Profile>
@@ -163,67 +200,24 @@ export interface AppConfig {
   aiProvider: AIProviderConfig
   engine: Record<string, unknown>
   agent: { allowAiTrading: boolean; claudeCode: Record<string, unknown> }
-  compaction: { maxContextTokens: number; maxOutputTokens: number }
+  trading: {
+    mode?: TradingMode
+    observeExternalOrdersEvery: string
+    keylessDataSources: Array<'binance' | 'okx' | 'bybit'>
+  }
   snapshot: {
     enabled: boolean
     every: string
   }
   mcp: McpConfig
-  connectors: ConnectorsConfig
+  ports: { web: number }
   [key: string]: unknown
 }
 
-/**
- * MCP server config — lives at top-level of AppConfig (NOT under
- * connectors:) because the MCP server exports OpenAlice's ToolCenter
- * to external clients, not because it's a chat-input surface.
- * `connectors.mcpAsk` is the chat-shaped MCP-as-input flavour and
- * stays under connectors.
- */
+/** MCP server config exports OpenAlice's ToolCenter to external clients. */
 export interface McpConfig {
   enabled: boolean
   port: number
-}
-
-export interface ConnectorsConfig {
-  web: { port: number }
-  mcpAsk: { enabled: boolean; port?: number }
-  telegram: {
-    enabled: boolean
-    botToken?: string
-    botUsername?: string
-    chatIds: number[]
-  }
-}
-
-// ==================== Topology ====================
-
-export interface TopologyEventType {
-  name: string
-  external: boolean
-  description?: string
-}
-
-export interface TopologyListener {
-  name: string
-  subscribes: string[]
-  emits: string[]
-  /** True if declared as wildcard '*' — UI renders an aura instead of N edges. */
-  subscribesWildcard: boolean
-  /** Same for emits. */
-  emitsWildcard: boolean
-}
-
-export interface TopologyProducer {
-  name: string
-  emits: string[]
-  emitsWildcard: boolean
-}
-
-export interface TopologyResponse {
-  eventTypes: TopologyEventType[]
-  producers: TopologyProducer[]
-  listeners: TopologyListener[]
 }
 
 // ==================== News Collector ====================
@@ -262,15 +256,6 @@ export interface NewsListResponse {
   lookback: string
 }
 
-// ==================== Events ====================
-
-export interface EventLogEntry {
-  seq: number
-  ts: number
-  type: string
-  payload: unknown
-}
-
 // ==================== Trading ====================
 
 export type BrokerHealth = 'healthy' | 'degraded' | 'offline'
@@ -300,6 +285,7 @@ export interface BrokerHealthInfo {
 export interface UTASummary {
   id: string
   label: string
+  asVendor: boolean
   capabilities: { supportedSecTypes: string[]; supportedOrderTypes: string[] }
   health: BrokerHealthInfo
 }
@@ -520,6 +506,10 @@ export interface UTAConfig {
   guards: GuardEntry[]
   /** User-filled form values for the preset's schema. */
   presetConfig: Record<string, unknown>
+  /** Whether broker-side account mutations are refused. */
+  readOnly: boolean
+  /** Whether this UTA participates in broker-backed market-data discovery. */
+  asVendor: boolean
 }
 
 // ==================== Broker Preset Metadata (from /broker-presets endpoint) ====================
@@ -550,6 +540,17 @@ export interface BrokerPreset {
   modes?: ModeOption[]
   subtitleFields: SubtitleField[]
   schema: JsonSchema
+}
+
+export type BrokerEngine = BrokerPreset['engine']
+
+export interface BrokerPackStatus {
+  engine: BrokerEngine
+  installed: boolean
+  source: 'builtin' | 'workspace' | 'downloaded' | 'missing' | 'broken'
+  version?: string
+  reason?: string
+  requiredBy: string[]
 }
 
 export interface GuardEntry {

@@ -152,7 +152,8 @@ export function createTradingRoutes(ctx: UTAEngineContext) {
     // 'unknown' — identity passthrough — when omitted or invalid.
     const rawAc = c.req.query('assetClass') as AssetClassHint | undefined
     const assetClass: AssetClassHint = rawAc && ALLOWED_ASSET_CLASSES.has(rawAc) ? rawAc : 'unknown'
-    const hits = await searchTradeableContracts(ctx.utaManager, pattern, assetClass)
+    const source = c.req.query('source') ?? c.req.query('accountId')
+    const hits = await searchTradeableContracts(ctx.utaManager, pattern, assetClass, source)
     return c.json({ results: hits, count: hits.length, utasConfigured: utas.length })
   })
 
@@ -194,7 +195,7 @@ export function createTradingRoutes(ctx: UTAEngineContext) {
       const { utaConfigSchema } = await import('@/core/config.js')
       const body = await c.req.json()
       const utaConfig = utaConfigSchema.parse({ ...body, id: body.id ?? '__test__' })
-      broker = createBroker(utaConfig)
+      broker = await createBroker(utaConfig)
       await broker.init()
       const [account, positions] = await Promise.all([broker.getAccount(), broker.getPositions()])
       return c.json({ success: true, account, positions })
