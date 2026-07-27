@@ -296,8 +296,9 @@ async function main() {
     toolCenter.register(createTradeRepublicTools(), 'trade-republic')
     console.log('trade-republic: tools registered (9 tools, read-only)')
   }
-  toolCenter.register(createAnalysisTools(), 'analysis')
-  console.log('analysis: tools registered (trBacktest)')
+  const { calculateIndicator: _retiredIndicator, ...analysisTools } = createAnalysisTools(barService)
+  toolCenter.register(analysisTools, 'analysis')
+  console.log('analysis: tools registered (trBacktest, trCreateProposal)')
 
   console.log(`tool-center: ${toolCenter.list().length} tools registered`)
 

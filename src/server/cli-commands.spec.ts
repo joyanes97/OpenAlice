@@ -50,7 +50,8 @@ describe('CLI_EXPORTS — data export (global tools)', () => {
   tc.register(createQuantTools(any), 'quant')
   tc.register(createSnapshotTools(any), 'snapshot')
   tc.register(createSimulateTools(any), 'simulate')
-  tc.register(createAnalysisTools(), 'analysis')
+  const { calculateIndicator: _retiredIndicator, ...analysisTools } = createAnalysisTools(any)
+  tc.register(analysisTools, 'analysis')
   tc.register(createEconomyTools(any, any), 'economy')
 
   it('every mapped verb resolves to a registered global tool', () => {

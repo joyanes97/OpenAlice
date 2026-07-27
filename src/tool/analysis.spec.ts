@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { createAnalysisTools } from './analysis.js'
 
+const any = {} as never
+
 describe('trCreateProposal', () => {
   it('downgrades unsupported BUY proposals and never permits execution', async () => {
-    const tools = createAnalysisTools()
+    const tools = createAnalysisTools(any)
     const result = await tools.trCreateProposal.execute!({
       ticker: 'AAPL',
       lenses: { fundamentals: 5, technical: 4, sentiment: 4, macroSector: 4, portfolioRisk: 4 },

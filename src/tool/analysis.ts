@@ -2,10 +2,25 @@ import { tool } from 'ai'
 import { z } from 'zod'
 import { spawnSync } from 'child_process'
 import { resolve } from 'path'
+import type { BarService } from '@/domain/market-data/bars/index'
+import { IndicatorCalculator } from '@/domain/analysis/indicator/calculator'
+import type { IndicatorContext, HistoricalDataResult } from '@/domain/analysis/indicator/types'
 
 const PROBE = resolve(process.cwd(), 'scripts/analysis/backtest_probe.py')
 const PYTR_LOCAL = process.env['PYTR_LOCAL'] ?? '/tmp/opencode/pytr-local'
 const score = z.number().min(1).max(5)
+
+function buildContext(
+  asset: 'equity' | 'crypto' | 'currency' | 'commodity',
+  barService: BarService,
+): IndicatorContext {
+  return {
+    getHistoricalData: async (symbol, interval): Promise<HistoricalDataResult> => {
+      const { bars, meta } = await barService.getBars({ symbol, assetClass: asset }, { interval })
+      return { data: bars, meta }
+    },
+  }
+}
 
 function runBacktest(ticker: string, strategy: string, months: number, commissionBps: number, slippageBps: number): unknown {
   const pythonPath = [PYTR_LOCAL, process.env['PYTHONPATH'] ?? ''].filter(Boolean).join(':')
@@ -26,8 +41,20 @@ function runBacktest(ticker: string, strategy: string, months: number, commissio
   return out.result
 }
 
-export function createAnalysisTools() {
+export function createAnalysisTools(barService: BarService) {
   return {
+    calculateIndicator: tool({
+      description: 'Legacy indicator calculator over vendor-default bars. Prefer calculateQuant for broker-keyed, time-sensitive analysis.',
+      inputSchema: z.object({
+        asset: z.enum(['equity', 'crypto', 'currency', 'commodity']),
+        formula: z.string(),
+        precision: z.number().int().min(0).max(10).optional(),
+      }),
+      execute: async ({ asset, formula, precision }) => {
+        const calculator = new IndicatorCalculator(buildContext(asset, barService))
+        return await calculator.calculate(formula, precision)
+      },
+    }),
     trBacktest: tool({
       description:
         'Run a simple backtest on a ticker using yfinance historical data. ' +
