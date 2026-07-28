@@ -22,6 +22,7 @@ import { createUTAClient } from '@traderalice/uta-protocol'
 import { UTAManagerSDK } from './services/uta-client/index.js'
 import { waitForUTAReady } from './services/uta-supervisor/health.js'
 import { resolveUTAUrl } from './services/uta-supervisor/url.js'
+import { scheduleInstalledBrokerPackReconciliation } from './services/broker-packs/auto-updater.js'
 import {
   liteUnavailableReason,
   readonlyMutationReason,
@@ -389,6 +390,12 @@ async function main() {
         localCliOnWeb,
         listen: webTransport !== 'ipc',
         ...(process.env['OPENALICE_TOOL_SOCKET'] ? { cliSocketPath: process.env['OPENALICE_TOOL_SOCKET'] } : {}),
+        // The packaged Workspace acceptance exercises the real scanner without
+        // adding a minute to every host in the package matrix. This flag is
+        // owned by the smoke launcher and never changes normal cadence.
+        ...(process.env['OPENALICE_ELECTRON_SMOKE_WORKSPACE_ACCEPTANCE'] === '1'
+          ? { scheduleScannerIntervalMs: 100 }
+          : {}),
       },
       workspaceServiceRef,
     ))
@@ -419,6 +426,7 @@ async function main() {
   }
 
   console.log('engine: started')
+  scheduleInstalledBrokerPackReconciliation()
 
   // Broker catalog refresh, snapshot scheduling, and broker close-on-
   // shutdown all live in the UTA service after Step 6.
